@@ -59,7 +59,7 @@ const LandingPage = () => {
     severity: 'info'
   });
   const navigate = useNavigate();
-  
+
   const user = JSON.parse(localStorage.getItem('user'));
 
   useEffect(() => {
@@ -168,25 +168,73 @@ const LandingPage = () => {
     e.preventDefault();
     try {
       const userData = JSON.parse(localStorage.getItem('user'));
-      // Try to find a room by name first
       let targetRoomId = joinRoomId;
+
       const foundRoom = allExistingRooms.find(
         (room) => room.name === joinRoomId || room.roomId === joinRoomId
       );
       if (foundRoom) {
         targetRoomId = foundRoom.roomId;
       }
-      
-      await axios.post(`/api/rooms/${targetRoomId}/join`, {}, {
+
+      // 🔹 Check if current user is the owner
+      const roomRes = await axios.get(`/api/rooms/${targetRoomId}/details`, {
+        headers: { Authorization: `Bearer ${userData.token}` }
+      });
+      const roomData = roomRes.data.room;
+
+      if (roomData.createdBy._id === userData.user.id) {
+        // ✅ Owner → join directly
+        navigate(`/editor/${targetRoomId}`);
+        return;
+      }
+
+      // 🔹 Not owner → send join request
+      const res = await axios.post(`/api/rooms/request-join/${targetRoomId}`, {}, {
         headers: {
           Authorization: `Bearer ${userData.token}`
         }
       });
-      navigate(`/editor/${targetRoomId}`);
+      if (res.data.redirect) {
+        navigate(res.data.redirect); // auto redirect if accepted or already member
+      } else {
+        setToast({ open: true, message: res.data.message, severity: res.data.success ? 'success' : 'info' });
+      }
+
+      setToast({ open: true, message: 'Join request sent! Waiting for acceptance...', severity: 'info' });
+
+      // 🔹 Poll until accepted
+      const pollAccepted = async () => {
+        try {
+          const res = await axios.get(`/api/rooms/${targetRoomId}/details`, {
+            headers: { Authorization: `Bearer ${userData.token}` }
+          });
+          if (res.data.room.users.includes(userData.user.id)) {
+            navigate(`/editor/${targetRoomId}`);
+            return true;
+          }
+        } catch (err) { }
+        return false;
+      };
+
+      let attempts = 0;
+      const maxAttempts = 30; // ~30 seconds
+      const interval = setInterval(async () => {
+        attempts++;
+        const accepted = await pollAccepted();
+        if (accepted || attempts >= maxAttempts) {
+          clearInterval(interval);
+          if (!accepted) {
+            setToast({ open: true, message: 'Request not accepted yet.', severity: 'warning' });
+          }
+        }
+      }, 1000);
     } catch (error) {
       console.error('Error joining room:', error);
+      setToast({ open: true, message: 'Failed to join room.', severity: 'error' });
     }
   };
+
 
   const handleLogout = () => {
     logout();
@@ -196,15 +244,47 @@ const LandingPage = () => {
   const handleJoinExistingRoom = async (roomId) => {
     try {
       const userData = JSON.parse(localStorage.getItem('user'));
-      await axios.post(`/api/rooms/${roomId}/join`, {}, {
+      // Send join request
+      const res = await axios.post(`/api/rooms/request-join/${roomId}`, {}, {
         headers: {
           Authorization: `Bearer ${userData.token}`
         }
       });
-      await fetchUserRooms();  // Refresh the room list
-      navigate(`/editor/${roomId}`);
+      if (res.data.redirect) {
+        navigate(res.data.redirect); // auto redirect if accepted or already member
+      } else {
+        setToast({ open: true, message: res.data.message, severity: res.data.success ? 'success' : 'info' });
+      }
+      setToast({ open: true, message: 'Join request sent! Waiting for acceptance...', severity: 'info' });
+      // Poll for acceptance
+      const pollAccepted = async () => {
+        try {
+          const res = await axios.get(`/api/rooms/${roomId}/details`, {
+            headers: { Authorization: `Bearer ${userData.token}` }
+          });
+          if (res.data.room.users.includes(userData.user.id)) {
+            await fetchUserRooms();
+            navigate(`/editor/${roomId}`);
+            return true;
+          }
+        } catch (err) { }
+        return false;
+      };
+      let attempts = 0;
+      const maxAttempts = 30;
+      const interval = setInterval(async () => {
+        attempts++;
+        const accepted = await pollAccepted();
+        if (accepted || attempts >= maxAttempts) {
+          clearInterval(interval);
+          if (!accepted) {
+            setToast({ open: true, message: 'Request not accepted yet.', severity: 'warning' });
+          }
+        }
+      }, 1000);
     } catch (error) {
-      console.error('Error joining room:', error);
+      console.error('Error sending join request:', error);
+      setToast({ open: true, message: 'Failed to send join request.', severity: 'error' });
     }
   };
 
@@ -240,16 +320,16 @@ const LandingPage = () => {
   return (
     <div className="landing-container">
       <Particles />
-      <div style={{ 
-        position: 'fixed', 
-        right: 0, 
-        top: 0, 
-        width: '50%', 
-        height: '100vh', 
+      <div style={{
+        position: 'fixed',
+        right: 0,
+        top: 0,
+        width: '50%',
+        height: '100vh',
         zIndex: 1,
         pointerEvents: 'none'
       }}>
-        <div style={{ 
+        <div style={{
           position: 'absolute',
           width: '100%',
           height: '100%',
@@ -279,11 +359,11 @@ const LandingPage = () => {
           <Container>
             <Box className="auth-container">
               <BrandHeader size="large" onClick={handleBrandClick} />
-              <Typography 
-                variant="h5" 
-                sx={{ 
-                  color: '#fff', 
-                  textAlign: 'center', 
+              <Typography
+                variant="h5"
+                sx={{
+                  color: '#fff',
+                  textAlign: 'center',
                   mb: 4,
                   opacity: 0.9,
                   maxWidth: '600px',
@@ -376,17 +456,17 @@ const LandingPage = () => {
                     <List className="room-history-list">
                       {rooms.map((room) => (
                         <ListItem key={room.roomId} className="room-list-item">
-                          <ListItemText 
+                          <ListItemText
                             primary={room.name}
                             secondary={`Created by ${room.createdBy.username}`}
-                            sx={{ 
+                            sx={{
                               color: '#fff',
                               '& .MuiListItemText-secondary': {
                                 color: 'rgba(0, 255, 149, 0.7)'
                               }
                             }}
                           />
-                          <Button 
+                          <Button
                             onClick={() => handleJoinExistingRoom(room.roomId)}
                             className="dialog-button"
                           >
@@ -449,7 +529,7 @@ const LandingPage = () => {
           </div>
         </DialogContent>
         <DialogActions sx={{ borderTop: '1px solid rgba(0, 255, 149, 0.2)', p: 2 }}>
-          <Button 
+          <Button
             onClick={() => setIsAboutOpen(false)}
             sx={{
               color: '#00ff95',

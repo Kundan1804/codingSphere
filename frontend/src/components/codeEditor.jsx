@@ -42,6 +42,9 @@ const CodeEditor = () => {
   const [channel] = useState(() => pusher.subscribe(`room-${roomId}`));
   const [lastUpdateBy, setLastUpdateBy] = useState(null);
   const currentUser = JSON.parse(localStorage.getItem('user'));
+  const [isOwner, setIsOwner] = useState(false);
+  const [joinRequested, setJoinRequested] = useState(false);
+  const [joinSuccess, setJoinSuccess] = useState(false);
   const [toast, setToast] = useState({
     open: false,
     message: '',
@@ -58,11 +61,19 @@ const CodeEditor = () => {
           }
         });
         setRoomName(response.data.room.name);
+        if (response.data.room.createdBy === userData.user.id) {
+          setIsOwner(true);
+        } else {
+          setIsOwner(false);
+        }
+        // Check if user is already in room
+        if (response.data.room.users.includes(userData.user.id)) {
+          setJoinSuccess(true);
+        }
       } catch (error) {
         console.error('Error fetching room details:', error);
       }
     };
-
     fetchRoomDetails();
   }, [roomId]);
 
@@ -332,6 +343,29 @@ const CodeEditor = () => {
       </EditorHeader>
       <Sidebar roomId={roomId} />
       <Box className="editor-content">
+        {/* {!isOwner && !joinSuccess && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', mt: 2 }}>
+            <Button
+              variant="contained"
+              sx={{ backgroundColor: '#00ff95', color: '#0f0f1a', fontWeight: 600 }}
+              disabled={joinRequested}
+              onClick={async () => {
+                setJoinRequested(true);
+                const userData = JSON.parse(localStorage.getItem('user'));
+                try {
+                  await axios.post(`${API_URL}/api/rooms/${roomId}/request-join`, {}, {
+                    headers: { Authorization: `Bearer ${userData.token}` }
+                  });
+                  setToast({ open: true, message: 'Join request sent!', severity: 'success' });
+                } catch (err) {
+                  setToast({ open: true, message: 'Failed to send join request.', severity: 'error' });
+                }
+              }}
+            >
+              {joinRequested ? 'Request Sent' : 'Join Room'}
+            </Button>
+          </Box>
+        )} */}
         <Box className="editor-wrapper">
           <Editor
             height="100%"
@@ -351,7 +385,6 @@ const CodeEditor = () => {
             }}
           />
         </Box>
-        
         <Box sx={{ 
           width: '100%', 
           maxWidth: '1200px',
@@ -377,9 +410,7 @@ const CodeEditor = () => {
             {isLoading ? 'Running...' : 'Run Code'}
           </Button>
         </Box>
-
         <InputTerminal value={input} onChange={handleInputChange} />
-
         <Box className="output-container" ref={outputRef}>
           <h3>Output:</h3>
           <pre>{output}</pre>

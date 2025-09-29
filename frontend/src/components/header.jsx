@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AppBar,
   Toolbar,
@@ -13,18 +13,49 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  Button
+  Button,
+  List,
+  ListItem,
+  ListItemText
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DownloadIcon from '@mui/icons-material/Download';
+import NotificationsIcon from '@mui/icons-material/Notifications';
 import { SUPPORTED_LANGUAGES, LANGUAGE_VERSIONS, FILE_EXTENSIONS, COMMENT_SYNTAX } from '../services/constants.js';
 import Particles from './styles/particles.jsx';
 import BrandHeader from './styles/brandheader.jsx';
+
+const API_URL = process.env.NODE_ENV === 'production' 
+  ? 'https://codehiveng.vercel.app'
+  : 'http://localhost:5000';
 
 const EditorHeader = ({ language, onLanguageChange, roomId, roomName, code }) => {
   const [openDialog, setOpenDialog] = useState(false);
   const [fileName, setFileName] = useState('');
   const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [pendingDialogOpen, setPendingDialogOpen] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [isOwner, setIsOwner] = useState(false);
+
+  useEffect(() => {
+    // Check if current user is room owner
+    const userData = JSON.parse(localStorage.getItem('user'));
+    if (userData && userData.user && userData.user.id && roomId) {
+      // Fetch room details to check owner
+      fetch(`${API_URL}/api/rooms/${roomId}/details`, {
+        headers: { Authorization: `Bearer ${userData.token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          // --- IGNORE ---
+          if (data.room && data.room.createdBy._id === userData.user.id) {
+            setIsOwner(true);
+          } else {
+            setIsOwner(false);
+          }
+        });
+    }
+  }, [roomId]);
 
   const handleBrandClick = () => {
     setIsAboutOpen(true);
@@ -54,6 +85,34 @@ const EditorHeader = ({ language, onLanguageChange, roomId, roomName, code }) =>
     window.URL.revokeObjectURL(url);
     setOpenDialog(false);
     setFileName('');
+  };
+
+  const handleBellClick = async () => {
+    // Fetch pending requests
+    const userData = JSON.parse(localStorage.getItem('user'));
+    if (!userData || !userData.token) return;
+    try {
+      const res = await fetch(`${API_URL}/api/rooms/${roomId}/pending-requests`, {
+        headers: { Authorization: `Bearer ${userData.token}` }
+      });
+      const data = await res.json();
+      setPendingRequests(data.requests || []);
+      setPendingDialogOpen(true);
+    } catch (err) {
+      setPendingRequests([]);
+      setPendingDialogOpen(true);
+    }
+  };
+
+  const handleAcceptRequest = async (requestId) => {
+    const userData = JSON.parse(localStorage.getItem('user'));
+    if (!userData || !userData.token) return;
+    await fetch(`${API_URL}/api/rooms/join-request/${requestId}/accept`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${userData.token}` }
+    });
+    // Refresh list
+    handleBellClick();
   };
 
   return (
@@ -151,6 +210,17 @@ const EditorHeader = ({ language, onLanguageChange, roomId, roomName, code }) =>
               </IconButton>
             </Tooltip>
 
+            {isOwner && (
+              <Tooltip title="Pending Join Requests">
+                <IconButton
+                  onClick={handleBellClick}
+                  sx={{ color: '#00ff95' }}
+                >
+                  <NotificationsIcon />
+                </IconButton>
+              </Tooltip>
+            )}
+
             <Box sx={{ 
               display: 'flex', 
               alignItems: 'center',
@@ -234,6 +304,41 @@ const EditorHeader = ({ language, onLanguageChange, roomId, roomName, code }) =>
           >
             Download
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Pending Join Requests Dialog */}
+      <Dialog
+        open={pendingDialogOpen}
+        onClose={() => setPendingDialogOpen(false)}
+        PaperProps={{
+          sx: {
+            background: 'rgba(15, 15, 26, 0.95)',
+            backdropFilter: 'blur(10px)',
+            border: '1px solid rgba(0, 255, 149, 0.2)',
+            color: '#00ff95'
+          }
+        }}
+      >
+        <DialogTitle>Pending Join Requests</DialogTitle>
+        <DialogContent>
+          {pendingRequests.length === 0 ? (
+            <Typography>No pending requests.</Typography>
+          ) : (
+            <List>
+              {pendingRequests.map(req => (
+                <ListItem key={req._id} secondaryAction={
+                  <Button sx={{ color: '#00ff95' }} onClick={() => handleAcceptRequest(req._id)}>Accept</Button>
+                }>
+                  <ListItemText  primary={req.requesterId.username} secondary={req.requesterId.email} primaryTypographyProps={{ sx: { color: '#00ff95' } }}
+  secondaryTypographyProps={{ sx: { color: '#00ff95' } }}/>
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingDialogOpen(false)} sx={{ color: '#00ff95' }}>Close</Button>
         </DialogActions>
       </Dialog>
 
